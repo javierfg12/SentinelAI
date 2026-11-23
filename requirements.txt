@@ -1,0 +1,6 @@
+# Python 3.10–3.13. Versions are bounded for API compatibility.
+streamlit>=1.36,<2
+pandas>=2.0,<3
+plotly>=5.20,<7
+scikit-learn>=1.4,<2
+tzdata>=2024.1

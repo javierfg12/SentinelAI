@@ -1,0 +1,49 @@
+SENTINELAI · GUÍA RÁPIDA
+=======================
+
+OPCIÓN 1: VER LA DEMO SIN INSTALAR NADA
+--------------------------------------
+1. Descomprime SentinelAI.zip.
+2. Abre ABRIR-DEMO.html con doble clic (Chrome, Edge, Firefox...).
+3. En el menú lateral, visita "Centro de alertas".
+4. Pulsa una alerta para inspeccionar evidencias.
+5. Prueba a buscar la IP 203.0.113.72 y la cuenta finance.
+6. Descarga el JSON desde "Centro de alertas" si te interesa.
+
+Nota: esta vista muestra resultados de 732 eventos ficticios analizados
+previamente con el motor Python. NO carga ni procesa archivos nuevos.
+
+OPCIÓN 2: ANALIZAR LOGS DESDE LA WEB EN WINDOWS
+-----------------------------------------------
+1. Instala Python 3.10 o superior desde python.org (marcando "Add Python to PATH").
+2. Abre PowerShell en la carpeta SentinelAI (Shift + clic derecho).
+3. Ejecuta estos comandos UNO A UNO:
+
+   py -m venv .venv
+   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+   .\.venv\Scripts\python.exe -m streamlit run app.py
+
+4. Abre http://localhost:8501 en el navegador si no se abre solo.
+5. Empieza con "Demo sintética", luego "Subir mis logs".
+
+OPCIÓN 3: USAR LA TERMINAL (SIN INTERFAZ)
+---------------------------------------
+python -m sentinelai.cli --input data/demo_auth.csv --format csv --output reports/informe.json --html reports/informe.html
+
+OPCIÓN 4: PROBAR EL CÓDIGO ANTES DE SUBIR A GITHUB
+-------------------------------------------------
+python -m pip install -r requirements-dev.txt
+python -m pytest
+
+ARCHIVOS IMPORTANTES
+--------------------
+app.py                  Interfaz web Streamlit
+sentinelai/detection.py Motor de detección basado en reglas
+sentinelai/ml.py        Isolation Forest experimental
+sentinelai/parsers.py   Importación de logs
+README.md               Presentación profesional para GitHub
+.github/workflows/ci.yml Pruebas automáticas al subir el repo
+
+CONSEJO DE PRIVACIDAD:
+Los archivos se procesan donde ejecutes Streamlit; no subas logs
+confidenciales a servidores públicos. Para tu portfolio usa la demo ficticia.
