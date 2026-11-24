@@ -4,8 +4,8 @@ Estos pasos **no publican nada automáticamente**. Debes hacerlos desde tu cuent
 
 ## A. Preparar el repositorio
 
-1. Descomprime `SentinelAI.zip` y abre la carpeta `SentinelAI` en VS Code.
-2. Prueba primero `ABRIR-DEMO.html` con doble clic.
+1. Descomprime el `.zip` y abre la carpeta `SentinelAI` en VS Code.
+2. Prueba primero `index.html` con doble clic.
 3. Si tienes Python, ejecuta los tests: `python -m pip install -r requirements-dev.txt` y `python -m pytest`.
 4. En GitHub, pulsa **New repository** y elige el nombre **SentinelAI** y visibilidad **Public**. No marques la opción de generar README (ya existe uno).
 5. Abre una terminal integrada de VS Code en la carpeta y ejecuta:
@@ -34,7 +34,7 @@ La demo se genera a partir del **motor real de detección**, pero contiene únic
 5. GitHub Pages podrá publicar una URL parecida a `https://TU-USUARIO.github.io/SentinelAI/`.
 6. Añade esa URL como **Website** en la sección "About" del repositorio para facilitar la revisión.
 
-El archivo `index.html` redirige a `ABRIR-DEMO.html`. La demo funciona completamente en el navegador y no envía el dataset a otros servicios.
+`index.html` es la propia demo (sin redirecciones), así que la URL raíz de Pages la muestra directamente. Para que LinkedIn y otras redes muestren una vista previa, añade en su `<head>` (plantilla `assets/preview_template.html`) `<meta property="og:image" content="https://TU-USUARIO.github.io/SentinelAI/assets/dashboard.png">` y `og:url` con tu URL real, y vuelve a ejecutar `python scripts/build_demo_preview.py`. La demo funciona completamente en el navegador y no envía el dataset a otros servicios.
 
 > La dirección y el despliegue se confirmarán en GitHub Pages; no asumas que la URL está operativa hasta comprobarla.
 
@@ -51,5 +51,5 @@ El archivo `index.html` redirige a `ABRIR-DEMO.html`. La demo funciona completam
 
 - No subas API keys ni logs reales de clientes.
 - Mantén archivos `.env` y `.streamlit/secrets.toml` fuera de Git, como ya indica `.gitignore`.
-- Confirma que GitHub Actions se ejecuta en verde (Python 3.10, 3.12 y 3.13).
+- Confirma que GitHub Actions se ejecuta en verde (Python 3.11, 3.12 y 3.13; el CI ejecuta ruff, los tests y comprueba que `index.html` está actualizado).
 - Captura una imagen de la UI Streamlit en tu propio ordenador cuando la pruebes y, si quieres, diferencia en el README esa captura de la vista offline.

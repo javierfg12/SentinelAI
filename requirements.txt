@@ -1,5 +1,5 @@
-# Python 3.10–3.13. Versions are bounded for API compatibility.
-streamlit>=1.36,<2
+# Python 3.11–3.13. Keep in sync with pyproject.toml (checked by tests/test_project.py).
+streamlit>=1.67,<2
 pandas>=2.0,<3
 plotly>=5.20,<7
 scikit-learn>=1.4,<2

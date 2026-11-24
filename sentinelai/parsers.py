@@ -1,6 +1,8 @@
 """CSV, JSONL and OpenSSH auth.log ingestion with strict, visible normalization.
 
 All stored timestamps are UTC; input without a timezone is interpreted as UTC.
+Supported timestamps: ISO 8601, syslog, epoch (s/ms) and dd/mm/yyyy or mm/dd/yyyy
+(see ``dayfirst``). Ambiguous dates are never guessed silently: a note is returned.
 No network request occurs, and unknown log patterns are not guessed.
 """
 
@@ -11,7 +13,8 @@ import io
 import ipaddress
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 import pandas as pd
 
@@ -31,12 +34,17 @@ ALIASES = {
 SUCCESS = {"success", "successful", "ok", "accepted", "passed", "true", "1", "éxito", "exito"}
 FAILURE = {"failure", "failed", "fail", "denied", "invalid", "false", "0", "error", "fallo"}
 SSH_LINE = re.compile(
-    r"^(?P<month>[A-Z][a-z]{2})\s+(?P<day>\d{1,2})\s+"
-    r"(?P<clock>\d{2}:\d{2}:\d{2})\s+\S+\s+sshd\[\d+\]:\s+"
-    r"(?P<status>Failed password|Accepted password|Accepted publickey)\s+"
+    r"^(?:(?P<month>[A-Z][a-z]{2})\s+(?P<day>\d{1,2})\s+(?P<clock>\d{2}:\d{2}:\d{2})"
+    r"|(?P<iso>\d{4}-\d{2}-\d{2}T\S+))"
+    r"\s+\S+\s+sshd(?:\[\d+\])?:\s+"
+    r"(?P<status>Failed|Accepted)\s+(?P<method>password|publickey|keyboard-interactive/pam)\s+"
     r"for\s+(?:invalid user\s+)?(?P<username>\S+)\s+from\s+"
-    r"(?P<ip>[0-9a-fA-F:.]+)\s+port\s+\d+\s+ssh2.*$"
+    r"(?P<ip>[0-9a-fA-F:.]+)\s+port\s+\d+(?:\s+ssh2)?.*$"
 )
+_MONTHS = {m: n for n, m in enumerate(
+    ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"), 1)}
+_NUMERIC_TS = re.compile(r"^\d{9,13}(?:\.\d+)?$")
+_LOCAL_DATE = re.compile(r"^\s*(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})\b")
 
 
 class ParseError(ValueError):
@@ -49,6 +57,8 @@ class ParseResult:
     dropped_rows: int
     total_rows: int
     source_format: str
+    dropped_reasons: dict[str, int] = field(default_factory=dict)
+    notes: list[str] = field(default_factory=list)
 
 
 def _check_size(data: bytes) -> None:
@@ -65,8 +75,13 @@ def _decode(data: bytes) -> str:
         raise ParseError("El archivo debe estar codificado en UTF-8.") from exc
 
 
-def parse_bytes(data: bytes, fmt: str, *, ssh_year: int = 2026) -> ParseResult:
-    """Parse a binary upload as csv, jsonl or ssh without contacting external services."""
+def parse_bytes(data: bytes, fmt: str, *, ssh_year: int | None = None, dayfirst: bool | None = None) -> ParseResult:
+    """Parse a binary upload as csv, jsonl or ssh without contacting external services.
+
+    ``ssh_year`` is the year of the FIRST syslog line (default: current year); a
+    December -> January rollover inside the file is handled. ``dayfirst`` forces
+    dd/mm (True) or mm/dd (False); None auto-detects and notes real ambiguity.
+    """
     _check_size(data)
     content = _decode(data)
     if fmt == "csv":
@@ -76,7 +91,7 @@ def parse_bytes(data: bytes, fmt: str, *, ssh_year: int = 2026) -> ParseResult:
             raise ParseError(f"CSV no válido: {exc}") from exc
         if len(raw) > MAX_EVENTS:
             raise ParseError("Demasiados eventos (máximo 100.000).")
-        return normalize(raw, "csv")
+        return normalize(raw, "csv", dayfirst=dayfirst)
     if fmt == "jsonl":
         records: list[dict] = []
         for n, line in enumerate(content.splitlines(), 1):
@@ -91,35 +106,50 @@ def parse_bytes(data: bytes, fmt: str, *, ssh_year: int = 2026) -> ParseResult:
             records.append(obj)
             if len(records) > MAX_EVENTS:
                 raise ParseError("Demasiados eventos (máximo 100.000).")
-        return normalize(pd.DataFrame.from_records(records), "jsonl")
+        return normalize(pd.DataFrame.from_records(records), "jsonl", dayfirst=dayfirst)
     if fmt == "ssh":
-        if not 2000 <= ssh_year <= 2100:
+        year = ssh_year if ssh_year is not None else datetime.now(timezone.utc).year
+        if not 2000 <= year <= 2100:
             raise ParseError("Año SSH fuera del rango permitido (2000-2100).")
         records = []
         lines = [line for line in content.splitlines() if line.strip()]
         if len(lines) > MAX_EVENTS:
             raise ParseError("Demasiadas líneas (máximo 100.000).")
+        prev_month = None
         for line in lines:
             found = SSH_LINE.match(line)
             if not found:
                 continue
             d = found.groupdict()
+            if d["iso"]:
+                stamp = d["iso"]
+            else:
+                month = _MONTHS.get(d["month"])
+                if month is None:
+                    continue
+                if prev_month is not None and prev_month - month > 6:
+                    year += 1  # December -> January rollover
+                prev_month = month
+                stamp = f"{d['month']} {d['day']} {year} {d['clock']}"
             records.append({
-                "timestamp": f"{d['month']} {d['day']} {ssh_year} {d['clock']}",
+                "timestamp": stamp,
                 "source_ip": d["ip"],
                 "username": d["username"],
-                "outcome": "failure" if d["status"] == "Failed password" else "success",
+                "outcome": "failure" if d["status"] == "Failed" else "success",
                 "service": "sshd",
                 "raw_event": line,
             })
-        result = normalize(pd.DataFrame.from_records(records), "ssh")
+        unrelated = len(lines) - len(records)
+        result = normalize(pd.DataFrame.from_records(records), "ssh", dayfirst=dayfirst)
         result.total_rows = len(lines)
         result.dropped_rows = len(lines) - len(result.events)
+        if unrelated:
+            result.dropped_reasons["líneas que no son un inicio de sesión sshd (cron, sudo, etc.; se ignoran a propósito)"] = unrelated
         return result
     raise ParseError("Formato desconocido. Usa csv, jsonl o ssh.")
 
 
-def normalize(raw: pd.DataFrame, source_format: str = "csv") -> ParseResult:
+def normalize(raw: pd.DataFrame, source_format: str = "csv", *, dayfirst: bool | None = None) -> ParseResult:
     """Normalize optional aliases; explicitly reject rows missing valid core attributes."""
     if raw.empty:
         raise ParseError("No se encontraron eventos de autenticación compatibles.")
@@ -146,8 +176,7 @@ def normalize(raw: pd.DataFrame, source_format: str = "csv") -> ParseResult:
     raw["outcome"] = raw["outcome"].str.lower().map(
         lambda status: "success" if status in SUCCESS else "failure" if status in FAILURE else ""
     )
-    # Explicitly parse heterogeneous ISO8601 timestamps and syslog dates in UTC.
-    timestamps = pd.to_datetime(raw["timestamp"], utc=True, errors="coerce", format="mixed")
+    timestamps, notes = _parse_timestamps(raw["timestamp"], dayfirst)
     ip_values = raw["source_ip"].drop_duplicates().tolist()
     valid_ips = {}
     for ip in ip_values:
@@ -155,16 +184,20 @@ def normalize(raw: pd.DataFrame, source_format: str = "csv") -> ParseResult:
             valid_ips[ip] = bool(ipaddress.ip_address(ip))
         except ValueError:
             valid_ips[ip] = False
-    valid = (
-        timestamps.notna()
-        & raw["source_ip"].map(valid_ips)
-        & raw["username"].ne("")
-        & raw["outcome"].ne("")
-    )
+    ip_ok = raw["source_ip"].map(valid_ips)
+    valid = timestamps.notna() & ip_ok & raw["username"].ne("") & raw["outcome"].ne("")
+    reasons = {
+        "fecha no reconocida": int(timestamps.isna().sum()),
+        "IP inválida": int((~ip_ok).sum()),
+        "usuario vacío": int(raw["username"].eq("").sum()),
+        "resultado desconocido (usa success/failure)": int(raw["outcome"].eq("").sum()),
+    }
+    reasons = {k: v for k, v in reasons.items() if v}
     total = len(raw)
     clean = raw.loc[valid].copy()
     if clean.empty:
-        raise ParseError("Ningún evento tiene fecha, IP, usuario y resultado válidos.")
+        detail = "; ".join(f"{k}: {v}" for k, v in reasons.items())
+        raise ParseError("Ningún evento tiene fecha, IP, usuario y resultado válidos. Motivos: " + detail)
     clean["timestamp"] = timestamps.loc[valid]
     clean["service"] = clean["service"].replace("", "unknown")
     clean["country"] = clean["country"].replace("", "Unknown")
@@ -177,7 +210,38 @@ def normalize(raw: pd.DataFrame, source_format: str = "csv") -> ParseResult:
             clean["source_ip"],
             clean["username"],
             clean["outcome"],
+            strict=True,
         )
     ]
     clean = clean.loc[:, list(COLUMNS)].sort_values(["timestamp", "event_id"]).reset_index(drop=True)
-    return ParseResult(events=clean, dropped_rows=total - len(clean), total_rows=total, source_format=source_format)
+    return ParseResult(events=clean, dropped_rows=total - len(clean), total_rows=total, source_format=source_format,
+                       dropped_reasons=reasons, notes=notes)
+
+
+def _parse_timestamps(values: pd.Series, dayfirst: bool | None) -> tuple[pd.Series, list[str]]:
+    """Parse mixed timestamps to UTC without silently swapping day and month."""
+    text = values.astype(str).str.strip()
+    notes: list[str] = []
+    parts: list[pd.Series] = []
+    numeric = text.str.match(_NUMERIC_TS)
+    if numeric.any():
+        nums = pd.to_numeric(text[numeric], errors="coerce")
+        seconds = nums.where(nums < 1e11, nums / 1000)  # >=1e11 is epoch in milliseconds
+        parts.append(pd.to_datetime(seconds, unit="s", utc=True, errors="coerce"))
+        notes.append("Marcas de tiempo numéricas interpretadas como epoch (segundos o milisegundos).")
+    local = text.str.match(_LOCAL_DATE) & ~numeric
+    if local.any():
+        fields = text[local].str.extract(_LOCAL_DATE).astype(int)
+        first_gt12, second_gt12 = bool((fields[0] > 12).any()), bool((fields[1] > 12).any())
+        if dayfirst is None:
+            use_dayfirst = not (second_gt12 and not first_gt12)
+            if not first_gt12 and not second_gt12:
+                notes.append("Fechas dd/mm/aaaa ambiguas: se interpretan como día/mes. "
+                             "Si tu log usa mes/día, indícalo con dayfirst=False.")
+        else:
+            use_dayfirst = dayfirst
+        parts.append(pd.to_datetime(text[local], dayfirst=use_dayfirst, utc=True, errors="coerce", format="mixed"))
+    rest = ~(numeric | local)
+    if rest.any():
+        parts.append(pd.to_datetime(text[rest], utc=True, errors="coerce", format="mixed"))
+    return pd.concat(parts).reindex(text.index), notes

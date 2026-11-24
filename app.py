@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from sentinelai.catalog import RULES, technique_url
 from sentinelai.detection import DetectionConfig, detect
 from sentinelai.ml import detect_anomalies
 from sentinelai.parsers import ParseError, parse_bytes
-from sentinelai.reporting import to_csv, to_html, to_json
+from sentinelai.reporting import to_csv, to_html, to_json, who
 
 ROOT = Path(__file__).resolve().parent
 COLORS = {"Crítica": "#ff6482", "Alta": "#ffae68", "Media": "#ffd777", "Baja": "#56b7ec"}
@@ -24,7 +25,7 @@ st.set_page_config(page_title="SentinelAI | Security Analytics", page_icon="🛡
 st.markdown("""
 <style>
 
-html, body, [class*="css"], [data-testid="stAppViewContainer"] {font-family:ui-sans-serif, system-ui, sans-serif;}
+html, body, [data-testid="stAppViewContainer"] {font-family:ui-sans-serif, system-ui, sans-serif;}
 .block-container {padding-top:2rem;padding-bottom:4rem;max-width:1540px;}
 [data-testid="stSidebar"] {background: #0d1728;border-right:1px solid #24364d;}
 [data-testid="stSidebar"] .block-container {padding-top:1.4rem;}
@@ -55,6 +56,13 @@ h1,h2,h3 {font-family:ui-sans-serif, system-ui, sans-serif;letter-spacing:-.03em
 </style>""", unsafe_allow_html=True)
 
 
+@st.cache_data(show_spinner="Analizando eventos...", max_entries=8)
+def analyze(raw: bytes, fmt: str, ssh_year: int, dayfirst: bool | None, cfg: DetectionConfig):
+    """Parse + detect once per (file, settings); Streamlit reruns on every click otherwise."""
+    parsed = parse_bytes(raw, fmt, ssh_year=ssh_year, dayfirst=dayfirst)
+    return parsed, detect(parsed.events, cfg)
+
+
 def hero() -> None:
     st.markdown(f"""
     <div class="hero"><div class="eyebrow">SECURITY OPERATIONS · EXPLAINABLE DETECTION · v{__version__}</div>
@@ -75,7 +83,7 @@ def chart_layout(fig: go.Figure, height: int = 320) -> go.Figure:
     fig.update_layout(
         height=height, margin=dict(l=12, r=14, t=16, b=15),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#abc0d7", family="DM Sans, sans-serif", size=12),
+        font=dict(color="#abc0d7", family="ui-sans-serif, system-ui, sans-serif", size=12),
         hoverlabel=dict(bgcolor="#15243b", font_color="white"),
         legend=dict(orientation="h", y=1.14, x=0),
     )
@@ -92,15 +100,20 @@ with st.sidebar:
     source_choice = st.radio("Datos de entrada", ["Demo sintética", "Subir mis logs"], horizontal=True, label_visibility="collapsed")
     fmt = "csv"
     upload = None
-    ssh_year = 2026
+    ssh_year = datetime.now(timezone.utc).year
+    dayfirst = None
     if source_choice == "Demo sintética":
         raw = (ROOT / "data" / "demo_auth.csv").read_bytes()
         st.caption("732 eventos reproducibles · escenarios benignos y sospechosos · 20–22 nov 2026")
     else:
         upload = st.file_uploader("CSV, JSONL o auth.log", type=["csv", "jsonl", "log", "txt"], help="Máximo 10 MB; procesa en la sesión local del servidor Streamlit")
-        fmt = st.selectbox("Formato del archivo", ["csv", "jsonl", "ssh"], format_func=lambda v: {"csv":"CSV · Tabla", "jsonl":"JSONL · Una línea por evento", "ssh":"SSH · auth.log"}[v])
+        guess = {"jsonl": "jsonl", "ndjson": "jsonl", "log": "ssh", "csv": "csv"}.get(
+            upload.name.rsplit(".", 1)[-1].lower() if upload and "." in upload.name else "", "csv")
+        fmt = st.selectbox("Formato del archivo", ["csv", "jsonl", "ssh"], index=["csv", "jsonl", "ssh"].index(guess), format_func=lambda v: {"csv":"CSV · Tabla", "jsonl":"JSONL · Una línea por evento", "ssh":"SSH · auth.log"}[v])
         if fmt == "ssh":
-            ssh_year = st.number_input("Año para syslog sin año", min_value=2000, max_value=2100, value=2026)
+            ssh_year = st.number_input("Año de la primera línea (syslog sin año)", min_value=2000, max_value=2100, value=ssh_year)
+        date_mode = st.selectbox("Fechas dd/mm vs mm/dd", ["Automático", "Día/mes (dd/mm/aaaa)", "Mes/día (mm/dd/aaaa)"], help="Solo afecta a fechas con barras; ISO 8601 y epoch no son ambiguos.")
+        dayfirst = {"Automático": None, "Día/mes (dd/mm/aaaa)": True, "Mes/día (mm/dd/aaaa)": False}[date_mode]
         raw = upload.getvalue() if upload else None
         st.caption("No subas registros privados a una instancia pública de la app. Usa ejecución local para datos sensibles.")
     st.divider()
@@ -109,11 +122,12 @@ with st.sidebar:
         failure_ip = st.slider("Fallos por IP", 3, 30, 8)
         failure_account = st.slider("Fallos por cuenta", 3, 20, 5)
         spray = st.slider("Cuentas objetivo (spray)", 3, 15, 6)
+        spray_max = st.slider("Máx. intentos por cuenta (spray)", 1, 5, 2)
         after_failures = st.slider("Fallos antes de éxito", 2, 10, 3)
         offhours = st.checkbox("Analizar accesos nocturnos", value=False, help="Indicador contextual de baja confianza, desactivado por defecto")
         tz = st.selectbox("Zona horaria de la regla nocturna", ["Europe/Madrid", "UTC", "America/New_York", "America/Mexico_City"])
     st.divider()
-    st.caption("SentinelAI v1.0 · Laboratorio defensivo · No sustituye a un SIEM ni prueba compromisos")
+    st.caption(f"SentinelAI v{__version__} · Laboratorio defensivo · No sustituye a un SIEM ni prueba compromisos")
 
 if raw is None:
     hero()
@@ -122,20 +136,23 @@ if raw is None:
     st.stop()
 
 try:
-    parsed = parse_bytes(raw, fmt, ssh_year=int(ssh_year))
     cfg = DetectionConfig(
         window_minutes=window, failed_ip_threshold=failure_ip,
         failed_account_threshold=failure_account, spraying_users_threshold=spray,
         success_after_failures=after_failures, detect_offhours=offhours, timezone=tz,
+        spraying_max_per_account=spray_max,
     )
+    parsed, alerts = analyze(raw, fmt, int(ssh_year), dayfirst, cfg)
     events = parsed.events
-    alerts = detect(events, cfg)
 except (ParseError, ValueError, UnicodeError) as exc:
     st.error(f"No se pudo procesar el archivo: {exc}")
     st.stop()
 
+for note in parsed.notes:
+    st.info(note)
 if parsed.dropped_rows:
-    st.warning(f"Se han descartado {parsed.dropped_rows} de {parsed.total_rows} líneas o eventos no compatibles o inválidos. Comprueba el formato y los campos.")
+    detail = "; ".join(f"{k}: {v}" for k, v in parsed.dropped_reasons.items())
+    st.warning(f"Se han descartado {parsed.dropped_rows} de {parsed.total_rows} filas o líneas." + (f" Motivos: {detail}." if detail else ""))
 
 if page == "Visión general":
     hero()
@@ -161,7 +178,7 @@ if page == "Visión general":
             if outcome in timeline:
                 fig.add_trace(go.Scatter(x=timeline.index, y=timeline[outcome], mode="lines", name=name, line=dict(color=color, width=2.3), fill="tozeroy" if outcome == "success" else None, fillcolor="rgba(72,230,185,.07)"))
         fig.update_yaxes(title_text="Eventos")
-        st.plotly_chart(chart_layout(fig), use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(chart_layout(fig), width="stretch", config={"displayModeBar": False})
     with right:
         heading("PRIORIZACIÓN", "Alertas por severidad")
         counts = alerts["severity"].value_counts() if len(alerts) else pd.Series(dtype=int)
@@ -169,7 +186,7 @@ if page == "Visión general":
         if labels:
             fig = go.Figure(go.Pie(labels=labels, values=[counts[x] for x in labels], hole=.67, marker_colors=[COLORS[x] for x in labels], textinfo="label+value", sort=False))
             fig.update_layout(showlegend=False, annotations=[dict(text=f"<b>{len(alerts)}</b><br>ALERTAS", x=.5, y=.5, showarrow=False, font=dict(size=14, color="#d5edf3"))])
-            st.plotly_chart(chart_layout(fig), use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(chart_layout(fig), width="stretch", config={"displayModeBar": False})
         else:
             st.success("Ninguna regla ha disparado alertas con los datos actuales.")
     left, right = st.columns([1.15, 1.6], gap="large")
@@ -179,7 +196,7 @@ if page == "Visión general":
         if len(ip_stats):
             fig = go.Figure(go.Bar(x=ip_stats.values, y=ip_stats.index.tolist(), orientation="h", marker_color="#50dcb8", text=ip_stats.values, textposition="outside"))
             fig.update_xaxes(title="Intentos fallidos")
-            st.plotly_chart(chart_layout(fig, 285), use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(chart_layout(fig, 285), width="stretch", config={"displayModeBar": False})
     with right:
         heading("TRIAJE PRIORITARIO", "Hallazgos recientes")
         if alerts.empty:
@@ -187,8 +204,9 @@ if page == "Visión general":
         else:
             for a in alerts.head(5).to_dict("records"):
                 st.markdown(f"""<div class="finding"><div><span style="color:{COLORS[a['severity']]};font-weight:800">● {escape(a['severity'].upper())}</span> &nbsp; <b>{escape(a['title'])}</b></div>
-                <div class="sub">{escape(a['source_ip'])} · {escape(a['username'])} · {escape(a['rule_id'])} · {escape(a['timestamp'][:16].replace('T',' '))} UTC</div></div>""", unsafe_allow_html=True)
-    st.info("**Cómo interpretar los resultados:** una alerta indica un patrón que merece revisión, no una intrusión confirmada. La demo contiene eventos sintéticos, incluidas anomalías introducidas deliberadamente.")
+                <div class="sub">{escape(a['source_ip'])} · {escape(who(a))} · {escape(a['rule_id'])} · {escape(a['timestamp'][:16].replace('T',' '))} UTC</div></div>""", unsafe_allow_html=True)
+    demo_note = " La demo contiene eventos sintéticos, incluidas anomalías introducidas deliberadamente." if source_choice == "Demo sintética" else ""
+    st.info("**Cómo interpretar los resultados:** una alerta indica un patrón que merece revisión, no una intrusión confirmada." + demo_note)
 
 elif page == "Centro de alertas":
     heading("INVESTIGACIÓN", "Centro de alertas", "Filtra hallazgos, inspecciona la evidencia y exporta un informe reproducible.")
@@ -200,10 +218,12 @@ elif page == "Centro de alertas":
     if rule_filter != "Todas":
         selected = selected[selected["rule_id"] == rule_filter]
     if ip_filter:
-        selected = selected[selected["source_ip"].str.lower().str.contains(ip_filter, regex=False) | selected["username"].str.lower().str.contains(ip_filter, regex=False)]
+        haystack = selected["source_ip"].str.lower() + " " + selected["username"].str.lower() + " " + selected["accounts"].map(lambda x: " ".join(x).lower())
+        selected = selected[haystack.str.contains(ip_filter, regex=False)]
     st.caption(f"{len(selected)} de {len(alerts)} alertas visibles")
     show_cols = ["severity", "timestamp", "title", "source_ip", "username", "rule_id", "mitre_id", "evidence_count"]
-    st.dataframe(selected[show_cols].rename(columns={"severity":"Prioridad", "timestamp":"Fecha (UTC)", "title":"Hallazgo", "source_ip":"IP de origen", "username":"Cuenta", "rule_id":"Regla", "mitre_id":"MITRE", "evidence_count":"Evidencias"}), use_container_width=True, hide_index=True, height=270)
+    table_view = selected[show_cols].assign(username=[who(a) for a in selected.to_dict("records")])
+    st.dataframe(table_view.rename(columns={"severity":"Prioridad", "timestamp":"Fecha (UTC)", "title":"Hallazgo", "source_ip":"IP de origen", "username":"Cuenta", "rule_id":"Regla", "mitre_id":"MITRE", "evidence_count":"Evidencias"}), width="stretch", hide_index=True, height=270)
     if not selected.empty:
         options = selected["alert_id"].tolist()
         lookup = {a["alert_id"]: a for a in selected.to_dict("records")}
@@ -214,21 +234,21 @@ elif page == "Centro de alertas":
         a1.metric("Prioridad", a["severity"])
         a2.metric("Score heurístico", f"{a['score']}/100", help="Puntuación orientativa fija por regla, no probabilidad de compromiso")
         a3.metric("Evidencias correlacionadas", a["evidence_count"])
-        st.write(a["description"])
+        st.text(a["description"])  # plain text: log-derived values must never be rendered as Markdown
         st.markdown(f"**Clasificación:** [{a['mitre_id']} · {a['mitre_name']}]({technique_url(a['mitre_id'])})")
         st.markdown(f"**Siguiente paso recomendado:** {a['recommendation']}")
         st.markdown("**Eventos que sustentan la alerta**")
         supporting = events[events["event_id"].isin(a["evidence_ids"])][["timestamp", "source_ip", "username", "outcome", "service", "event_id"]].copy()
         supporting["timestamp"] = supporting["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S UTC")
-        st.dataframe(supporting, use_container_width=True, hide_index=True)
+        st.dataframe(supporting, width="stretch", hide_index=True)
         if a["evidence_count"] > 30:
             st.caption("Se muestra una muestra de hasta 30 IDs de evento asociados a esta alerta.")
     st.divider()
     heading("EXPORTACIÓN", "Informes descargables")
     e1, e2, e3 = st.columns(3)
-    e1.download_button("⬇ Informe HTML", to_html(selected, events), file_name="sentinelai-informe.html", mime="text/html", use_container_width=True)
-    e2.download_button("⬇ Alertas CSV", to_csv(selected), file_name="sentinelai-alertas.csv", mime="text/csv", use_container_width=True)
-    e3.download_button("⬇ Informe JSON", to_json(selected, events), file_name="sentinelai-informe.json", mime="application/json", use_container_width=True)
+    e1.download_button("⬇ Informe HTML", to_html(selected, events, config=cfg), file_name="sentinelai-informe.html", mime="text/html", width="stretch")
+    e2.download_button("⬇ Alertas CSV", to_csv(selected), file_name="sentinelai-alertas.csv", mime="text/csv", width="stretch")
+    e3.download_button("⬇ Informe JSON", to_json(selected, events, config=cfg, parsed=parsed, raw_input=raw), file_name="sentinelai-informe.json", mime="application/json", width="stretch")
     st.caption("Los informes exportados aplican los filtros visibles. Los informes no sustituyen un análisis forense ni el contraste con otras fuentes.")
 
 elif page == "Explorador de eventos":
@@ -243,7 +263,7 @@ elif page == "Explorador de eventos":
     st.caption(f"Mostrando {min(len(filtered), 5000):,} de {len(filtered):,} eventos filtrados. La tabla está limitada a 5.000 filas para facilitar la exploración.")
     present = filtered.head(5000)[["timestamp", "source_ip", "username", "outcome", "service", "country", "event_id"]].copy()
     present["timestamp"] = present["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S UTC")
-    st.dataframe(present, use_container_width=True, hide_index=True, height=480)
+    st.dataframe(present, width="stretch", hide_index=True, height=480)
     st.divider()
     heading("DICCIONARIO", "Esquema de autenticación")
     st.markdown("Las columnas mínimas son `timestamp`, `source_ip`, `username` y `outcome` (`success` o `failure`). Se admiten alias como `time`, `src_ip`, `user` y `status`. Las fechas sin zona horaria se interpretan como **UTC**.")
@@ -269,13 +289,13 @@ elif page == "Detección con ML":
             fig.add_trace(go.Scatter(x=sample["events"], y=sample["unique_accounts"], mode="markers", name=label, marker=dict(color=color, size=9, opacity=.75), customdata=sample[["source_ip", "failures"]].to_numpy(), hovertemplate="Eventos: %{x}<br>Cuentas: %{y}<br>IP: %{customdata[0]}<br>Fallos: %{customdata[1]}<extra></extra>"))
         fig.update_xaxes(title="Eventos por IP / 15 min")
         fig.update_yaxes(title="Cuentas diferentes")
-        st.plotly_chart(chart_layout(fig, 375), use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(chart_layout(fig, 375), width="stretch", config={"displayModeBar": False})
         heading("PUNTUACIONES", "Ventanas que merecen una mirada")
         if suspicious.empty:
             st.info("No se han clasificado muestras atípicas.")
         else:
             table = suspicious.head(50).rename(columns={"source_ip":"IP", "bucket":"Hora (UTC)", "events":"Eventos", "failures":"Fallos", "unique_accounts":"Cuentas", "failure_ratio":"Tasa de fallos", "after_hours":"Eventos de madrugada (UTC)", "anomaly_score":"Score estadístico"})
-            st.dataframe(table, use_container_width=True, hide_index=True)
+            st.dataframe(table, width="stretch", hide_index=True)
         st.caption("El score procede de -decision_function() y no es un porcentaje de riesgo. Puede cambiar con otro lote de entrada o con la contaminación configurada.")
 
 else:
@@ -291,7 +311,9 @@ else:
     st.markdown("""**Limitaciones importantes:**
 - Detección por lotes, no en tiempo real, sin persistencia, agentes ni respuesta automática.
 - Los umbrales son heurísticos y deben calibrarse; fallos de autenticación pueden ser legítimos.
-- Los registros SSH clásicos no contienen año ni zona horaria: se solicita el año y se asume UTC.
+- Los registros SSH clásicos no contienen año ni zona horaria: se solicita el año de la primera línea y se asume UTC. Solo se leen inicios de sesión `sshd` (Failed/Accepted); el resto de líneas se ignoran a propósito.
+- Las fechas dd/mm/aaaa ambiguas se interpretan como día/mes salvo que indiques lo contrario.
+- AUTH-003 no detecta spraying con más intentos por cuenta que el máximo configurado.
 - La correlación no atribuye identidades ni confirma compromiso. La geolocalización no se consulta externamente.
 - El entrenamiento ML se hace con el mismo lote de análisis; es una señal exploratoria, no un clasificador validado.""")
 

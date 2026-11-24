@@ -1,16 +1,22 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "sentinelai-security"
-version = "1.0.0"
+dynamic = ["version"]
 description = "Explainable local SOC analytics for authentication logs"
 readme = "README.md"
-requires-python = ">=3.10"
-authors = [{name = "SentinelAI project"}]
-license = {text = "MIT"}
-dependencies = ["streamlit>=1.36,<2", "pandas>=2.0,<3", "plotly>=5.20,<7", "scikit-learn>=1.4,<2", "tzdata>=2024.1"]
+requires-python = ">=3.11"
+authors = [{name = "Javier de la Fuente"}]
+license = "MIT"
+dependencies = ["streamlit>=1.67,<2", "pandas>=2.0,<3", "plotly>=5.20,<7", "scikit-learn>=1.4,<2", "tzdata>=2024.1"]
+
+[project.scripts]
+sentinelai = "sentinelai.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "sentinelai.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["sentinelai*"]
@@ -22,3 +28,7 @@ addopts = "-q"
 [tool.ruff]
 line-length = 120
 exclude = ["data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = ["E501"]  # the codebase favours readable long lines over wrapping

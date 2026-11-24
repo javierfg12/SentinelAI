@@ -8,7 +8,6 @@ from __future__ import annotations
 import csv
 import json
 import random
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 

@@ -6,7 +6,7 @@
 
 **Un laboratorio defensivo para analizar accesos, investigar patrones sospechosos y generar informes.**
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
 ![Streamlit](https://img.shields.io/badge/Streamlit-Dashboard-FF4B4B?logo=streamlit&logoColor=white)
 ![MIT](https://img.shields.io/badge/License-MIT-3bc9ad)
 ![Offline](https://img.shields.io/badge/Mode-Local%20%26%20Offline-23be96)
@@ -18,8 +18,9 @@
 ## 👀 Vista previa
 
 ![Captura real de la demo offline de SentinelAI](assets/dashboard.png)
+![Centro de alertas con expediente de investigación](assets/alerts.png)
 
-**Prueba inmediata:** descarga el repositorio y abre **`ABRIR-DEMO.html`** con doble clic. Funciona sin Python ni instalación: navegación, filtros, detalles de alertas y descarga JSON, todo con datos sintéticos precalculados. Para analizar tus propios logs, ejecuta la aplicación Python indicada más abajo.
+**Prueba inmediata:** descarga el repositorio y abre **`index.html`** con doble clic. Funciona sin Python ni instalación: navegación, filtros, detalles de alertas y descarga JSON, todo con datos sintéticos precalculados. Para analizar tus propios logs, ejecuta la aplicación Python indicada más abajo.
 
 > **Demo reproducible:** abre la interfaz con los datos sintéticos integrados y verás casos de fuerza bruta, password spraying y un acceso correcto después de varios fallos.
 
@@ -27,7 +28,7 @@
 
 ## 🚀 Inicio rápido
 
-Necesitas **Python 3.10 o superior** y un navegador actualizado. Compatible con Windows y WSL2.
+Necesitas **Python 3.11 o superior** y un navegador actualizado. Compatible con Windows y WSL2.
 
 **Windows — PowerShell**
 
@@ -73,7 +74,7 @@ Abre **http://localhost:8501**. No se requiere token, conexión a servicios de t
 | `AUTH-001` | Muchos fallos desde una IP | [T1110.001](https://attack.mitre.org/techniques/T1110/001/) | Alta |
 | `AUTH-002` | Muchos fallos contra la misma cuenta desde una IP | [T1110.001](https://attack.mitre.org/techniques/T1110/001/) | Alta |
 | `AUTH-003` | Fallos contra muchas cuentas con pocas pruebas por cuenta | [T1110.003](https://attack.mitre.org/techniques/T1110/003/) | Alta |
-| `AUTH-004` | Acceso correcto tras fallos recientes del mismo origen/cuenta | [T1078](https://attack.mitre.org/techniques/T1078/) | Crítica |
+| `AUTH-004` | Acceso correcto tras fallos recientes del mismo origen/cuenta | [T1078](https://attack.mitre.org/techniques/T1078/) | Crítica si los fallos alcanzan el umbral por cuenta; Media si no |
 | `AUTH-005` | Acceso nocturno, indicador contextual (opcional) | [T1078](https://attack.mitre.org/techniques/T1078/) | Baja |
 
 **Importante:** la asociación con MITRE describe una hipótesis compatible, **no confirma** que se haya ejecutado una técnica ni que exista compromiso. Los scores son orientativos, no probabilidades de ataque.
@@ -101,9 +102,9 @@ timestamp,source_ip,username,outcome,service,country
 2026-11-20T09:31:00Z,203.0.113.21,ana,success,vpn,ES
 ```
 
-Obligatorias: `timestamp`, `source_ip`, `username`, `outcome`. Se aceptan alias habituales (`time`, `src_ip`, `user`, `status`) y valores normalizados de éxito/fracaso. Campos opcionales: `service`, `country`, `user_agent`, `raw_event`. Los timestamps sin offset se interpretan como UTC; las filas inválidas se descartan con contador visible.
+Obligatorias: `timestamp`, `source_ip`, `username`, `outcome`. Se aceptan alias habituales (`time`, `src_ip`, `user`, `status`) y valores normalizados de éxito/fracaso. Campos opcionales: `service`, `country`, `user_agent`, `raw_event`. Los timestamps sin offset se interpretan como UTC. Se aceptan ISO 8601, syslog, epoch (segundos o milisegundos) y fechas `dd/mm/aaaa` o `mm/dd/aaaa`: si todas son ambiguas se interpretan como día/mes y se avisa (`--dayfirst dmy|mdy` o el selector de la app lo fuerzan). Las filas inválidas se descartan con contador y motivos visibles.
 
-**OpenSSH:** admite líneas de `sshd` de tipo `Failed password`, `Accepted password` y `Accepted publickey` del formato clásico `auth.log`. Como el syslog clásico no contiene año ni zona horaria, se debe elegir un año y se interpreta como **UTC**. Otros formatos SSH no se procesan ni se interpretan especulativamente.
+**OpenSSH:** lee los inicios de sesión de `sshd` (`Failed`/`Accepted` con `password`, `publickey` o `keyboard-interactive/pam`), tanto con fecha syslog clásica como ISO 8601. El resto de líneas (cron, sudo, `Invalid user`, etc.) se ignora a propósito y se cuenta aparte; `Invalid user` no se lee porque duplicaría el `Failed password` que lo acompaña. El syslog clásico no contiene año ni zona horaria: indica el año de la **primera línea** (por defecto, el actual; el salto de diciembre a enero se gestiona) y se interpreta como **UTC**.
 
 Límite de tamaño: **10 MB** y **100.000 registros** por lote. Los análisis son locales al servidor que ejecuta Streamlit: si lo publicas en un servidor ajeno, no subas logs sensibles.
 
@@ -126,8 +127,7 @@ Para probar SSH: `python -m sentinelai.cli --input data/demo_ssh.log --format ss
 
 ```text
 sentinelai/
-├── index.html                # Entrada para GitHub Pages
-├── ABRIR-DEMO.html           # Vista interactiva offline, sin instalación
+├── index.html                # Demo interactiva offline (doble clic) y entrada de GitHub Pages
 ├── app.py                    # Interfaz Streamlit (5 vistas)
 ├── sentinelai/
 │   ├── parsers.py            # CSV / JSONL / SSH, normalización UTC
@@ -139,8 +139,8 @@ sentinelai/
 ├── data/                     # Datos ficticios, reproducibles
 ├── scripts/generate_demo.py  # Generador determinista
 ├── tests/                    # Tests unitarios e integración
-├── assets/dashboard.png      # Captura real de la demo offline
-└── .github/workflows/ci.yml  # CI para Python 3.10, 3.12, 3.13
+├── assets/                   # Plantilla de la demo y capturas reales
+└── .github/workflows/ci.yml  # CI: ruff + tests en Python 3.11, 3.12, 3.13
 ```
 
 ## ✅ Pruebas
@@ -150,7 +150,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-Al subir cambios, GitHub Actions ejecutará los tests y el smoke test del CLI. Para reproducir los datos sintéticos, usa `python scripts/generate_demo.py`. Para reconstruir la demo HTML a partir de las detecciones, ejecuta `python scripts/build_demo_preview.py`.
+Al subir cambios, GitHub Actions ejecutará ruff, los tests (incluido un smoke test de la app Streamlit), el smoke test del CLI y comprobará que `index.html` está regenerado con `python scripts/build_demo_preview.py`. Para reproducir los datos sintéticos, usa `python scripts/generate_demo.py`. Para reconstruir la demo HTML a partir de las detecciones, ejecuta `python scripts/build_demo_preview.py`.
 
 ## 🔬 Cómo funciona la detección
 
@@ -164,6 +164,7 @@ Al subir cambios, GitHub Actions ejecutará los tests y el smoke test del CLI. P
 
 - **No es un SIEM de producción:** no hay streaming, autenticación multiusuario, alertas en directo, almacenamiento cifrado ni auditoría de acceso.
 - **No hay clasificación validada:** ni métricas operativas de precisión/recall ni dataset etiquetado; se trata de heurísticas y exploración estadística.
+- **Reglas con límites conocidos:** AUTH-003 solo salta si ninguna cuenta supera el máximo de intentos configurado (2 por defecto); AUTH-004 sube a Crítica solo cuando los fallos previos ya alcanzan el umbral de fuerza bruta por cuenta.
 - **Posibles falsos positivos:** actividad legítima puede activar las reglas. Los umbrales y el contexto importan.
 - **MITRE no significa atribución:** una táctica plausible no equivale a evidencia de adversario.
 - **Privacidad:** no se envían logs a APIs externas; los archivos se procesan donde esté alojada la aplicación. Se recomienda su uso local.

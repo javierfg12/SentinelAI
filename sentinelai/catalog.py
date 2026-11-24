@@ -30,7 +30,7 @@ RULES = {
         "severity": "Crítica",
         "technique": "T1078",
         "technique_name": "Valid Accounts",
-        "description": "Un mismo origen logra autenticarse en una cuenta después de varios intentos fallidos. No confirma compromiso.",
+        "description": "Un mismo origen logra autenticarse en una cuenta después de varios intentos fallidos. No confirma compromiso. Severidad Crítica si los fallos alcanzan el umbral de fuerza bruta por cuenta; Media en caso contrario.",
         "recommendation": "Verificar con el usuario si reconoce el inicio de sesión; revisar MFA, dispositivo, sesión y actividad posterior.",
     },
     "AUTH-005": {

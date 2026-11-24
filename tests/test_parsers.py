@@ -3,7 +3,7 @@ import json
 import pandas as pd
 import pytest
 
-from sentinelai.parsers import ParseError, parse_bytes, normalize
+from sentinelai.parsers import ParseError, normalize, parse_bytes
 
 
 def test_csv_aliases_and_invalid_rows():

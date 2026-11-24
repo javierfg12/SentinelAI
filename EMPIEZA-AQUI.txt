@@ -3,8 +3,8 @@ SENTINELAI · GUÍA RÁPIDA
 
 OPCIÓN 1: VER LA DEMO SIN INSTALAR NADA
 --------------------------------------
-1. Descomprime SentinelAI.zip.
-2. Abre ABRIR-DEMO.html con doble clic (Chrome, Edge, Firefox...).
+1. Descomprime el .zip.
+2. Abre index.html con doble clic (Chrome, Edge, Firefox...).
 3. En el menú lateral, visita "Centro de alertas".
 4. Pulsa una alerta para inspeccionar evidencias.
 5. Prueba a buscar la IP 203.0.113.72 y la cuenta finance.
@@ -15,7 +15,7 @@ previamente con el motor Python. NO carga ni procesa archivos nuevos.
 
 OPCIÓN 2: ANALIZAR LOGS DESDE LA WEB EN WINDOWS
 -----------------------------------------------
-1. Instala Python 3.10 o superior desde python.org (marcando "Add Python to PATH").
+1. Instala Python 3.11 o superior desde python.org (marcando "Add Python to PATH").
 2. Abre PowerShell en la carpeta SentinelAI (Shift + clic derecho).
 3. Ejecuta estos comandos UNO A UNO:
 
@@ -23,12 +23,13 @@ OPCIÓN 2: ANALIZAR LOGS DESDE LA WEB EN WINDOWS
    .\.venv\Scripts\python.exe -m pip install -r requirements.txt
    .\.venv\Scripts\python.exe -m streamlit run app.py
 
-4. Abre http://localhost:8501 en el navegador si no se abre solo.
+4. Streamlit abrirá el navegador; si no, abre http://localhost:8501.
 5. Empieza con "Demo sintética", luego "Subir mis logs".
 
 OPCIÓN 3: USAR LA TERMINAL (SIN INTERFAZ)
 ---------------------------------------
 python -m sentinelai.cli --input data/demo_auth.csv --format csv --output reports/informe.json --html reports/informe.html
+(Fechas dd/mm/aaaa: añade --dayfirst dmy. auth.log: --format ssh --ssh-year AÑO)
 
 OPCIÓN 4: PROBAR EL CÓDIGO ANTES DE SUBIR A GITHUB
 -------------------------------------------------
