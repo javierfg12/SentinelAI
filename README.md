@@ -11,6 +11,9 @@
 ![MIT](https://img.shields.io/badge/License-MIT-3bc9ad)
 ![Offline](https://img.shields.io/badge/Mode-Local%20%26%20Offline-23be96)
 
+
+**🌐 [Probar SentinelAI online](https://javierfg12.github.io/SentinelAI/)**
+
 </div>
 
 ---
